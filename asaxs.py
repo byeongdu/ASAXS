@@ -63,8 +63,16 @@ def compute_Iq(q, Im, energies, element):
     # Create the matrix A using the computed f1 and f2 values
     # and the energies
     A = create_mx3_array(energies, fp=fp, fdp   =fdp)
-    Iq = np.linalg.lstsq(A, Im.T, rcond=None)[0]  # Solve for Iq using least squares
+    # Solve for Iq using least squares
+    Iq, residuals, rank, s = np.linalg.lstsq(A, Im.T, rcond=None)
+    
+
+    print(f"Rank of A: {rank}")
+    print(f"Singular values of A: {s}")
+    print(f"Fit residuals: {residuals}")
+    print(f"A shape: {A.shape[0]}")
     Iq = np.array(Iq).T  # Transpose to match the expected output shape
+    residuals = np.array(residuals).T  # Transpose to match the expected output shape
     # Plot Iq vs q for all three columns
     plt.figure(figsize=(12, 6))
 
@@ -73,26 +81,29 @@ def compute_Iq(q, Im, energies, element):
     for i in range(Im.shape[1]):
         plt.loglog(q, Im[:, i], label=f"Im_{energies[i]:.3f} keV")
     plt.xlabel("q")
-    plt.ylabel("Im")
-    plt.title("q vs Im")
+    plt.ylabel("I(q)_m")
+    plt.title("Measured Intensities")
     plt.legend()
     plt.grid()
 
     # Right subplot: q vs Iq
     plt.subplot(1, 2, 2)
-    plt.loglog(q, Iq[:, 0], label="Iq0")
-    plt.loglog(q, Iq[:, 1], label="Iq_cross")
-    plt.loglog(q, Iq[:, 2], label="Iq_resonant")
+    plt.loglog(q, Iq[:, 0], 'o', label="Iq0")
+    plt.loglog(q, Iq[:, 1], 'o', label="Iq_cross")
+    plt.loglog(q, Iq[:, 2], 'o', label="Iq_resonant")
+    #plt.errorbar(q, Iq[:, 0], yerr=error, fmt='none', ecolor='red', capsize=3)
+    #plt.errorbar(q, Iq[:, 1], yerr=error, fmt='o', label="Iq_cross", capsize=3)
+    #plt.errorbar(q, Iq[:, 2], yerr=error, fmt='o', label="Iq_resonant", capsize=3)
     plt.xlabel("q")
     plt.ylabel("Iq")
-    plt.title("q vs Iq")
+    plt.title("Three Components of Iq")
     plt.legend()
     plt.grid()
     plt.tight_layout()
     plt.show()
-    return Iq, A
+    return Iq, A, residuals
 
-def save_results(file_path, A, q, Iq):
+def save_results(file_path, A, q, Iq, err):
     # Save the matrix A to a new file
     output_file_A = file_path.rsplit(".", 1)[0] + "_A.txt"
     np.savetxt(output_file_A, A, header="% Matrix A (3 columns: 1, 2*f1, f1^2 + f2^2)", comments='')
@@ -100,18 +111,23 @@ def save_results(file_path, A, q, Iq):
     # Save the results to a new file
     output_file = file_path.rsplit(".", 1)[0] + "_Iq.txt"
     with open(output_file, 'w') as f:
-        f.write("% q Iq0 Iq_cross Iq_resonant\n")
-        for qi, iq in zip(q, Iq):
-            f.write(f"{qi} {iq[0]} {iq[1]} {iq[2]}\n")
+        f.write("% q Iq0 Iq_cross Iq_resonant Residual\n")
+        for qi, iq, er in zip(q, Iq, err):
+            f.write(f"{qi} {iq[0]} {iq[1]} {iq[2]} {er}\n")
     print(f"Results saved to {output_file}")
 
 # Example usage
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) <= 1:
         print("Usage: python asaxs.py <file_path>")
+        print("Usage: python asaxs.py <file_path> <column_starting_to_include>")
         sys.exit(1)
     file_path = sys.argv[1]
+    if len(sys.argv)>2:
+        omit = int(sys.argv[2])
+    else:
+        omit = 0
     q, Im, element, energies = load_ascii_data(file_path)
     if q is not None and energies is not None:
-        Iq, A = compute_Iq(q, Im, energies, element)  # Example element
-        save_results(file_path, A, q, Iq)
+        Iq, A, err = compute_Iq(q, Im[:,omit:], energies[omit:], element)  # Example element
+        save_results(file_path, A, q, Iq, err)
