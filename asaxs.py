@@ -23,14 +23,22 @@ def load_ascii_data(file_path):
 # Function to compute f1 and f2 for given x-ray energies
 def compute_f1_f2(energies, element):
     # energies should be in keV
-    fprime = []
-    fdprime = []
+    # f = f0 + fp + i*fdp; see https://www.xtal.iqf.csic.es/Cristalografia/parte_05_7-en.html
+    # f0 = xraydb.f0(element, energy*1000)  # Convert keV to eV
+    # fprime = xraydb.f1_chantler(element, energy*1000)  # Convert keV to eV  
+    # fdprime = xraydb.f2_chantler(element, energy*1000)  # Convert keV to eV
+    # f1 = f0 + fprime
+    # f2 = fdprime  
+    f1 = []
+    f2 = []
     for energy in energies:
+        f0 = xraydb.f0(element,0)  # Convert keV to eV
+        #fp = f0[0] + xraydb.f1_chantler(element, energy*1000)  # Convert keV to eV
         fp = xraydb.f1_chantler(element, energy*1000)  # Convert keV to eV
         fdp = xraydb.f2_chantler(element, energy*1000)  # Convert keV to eV
-        fprime.append(fp)
-        fdprime.append(fdp)
-    return np.array(fprime), np.array(fdprime)
+        f1.append(fp)
+        f2.append(fdp)
+    return np.array(f1), np.array(f2)
 
 def create_mx3_array(energies, fp, fdp):
     m = len(energies)
@@ -50,6 +58,8 @@ def compute_Iq(q, Im, energies, element):
     # Compute f1 and f2 for the given element and energies
     # energies should be in keV
     fp, fdp = compute_f1_f2(energies, xraydb_element)
+    print(f"f1 (fp): {fp}")
+    print(f"f2 (fdp): {fdp}")
     # Plot f1 (fp) and f2 (fdp) vs energy
     plt.figure()
     plt.plot(energies, fp, label="f1 (fp)")
@@ -64,9 +74,15 @@ def compute_Iq(q, Im, energies, element):
     # and the energies
     A = create_mx3_array(energies, fp=fp, fdp   =fdp)
     # Solve for Iq using least squares
-    Iq, residuals, rank, s = np.linalg.lstsq(A, Im.T, rcond=None)
-    
+    #Iq, residuals, rank, s = np.linalg.lstsq(A, Im.T, rcond=None)
+    lambda_reg = 1e-6  # small regularization factor
+    A_reg = A.T @ A + lambda_reg * np.identity(A.shape[1])
+    b_reg = A.T @ Im.T
 
+    Iq = np.linalg.solve(A_reg, b_reg)
+    residuals = np.linalg.norm(A @ Iq - Im.T, axis=0)  # Compute residuals for each energy
+    rank = np.linalg.matrix_rank(A)
+    s = np.linalg.svd(A, compute_uv=False)
     print(f"Rank of A: {rank}")
     print(f"Singular values of A: {s}")
     print(f"Fit residuals: {residuals}")
