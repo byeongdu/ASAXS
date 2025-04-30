@@ -4,8 +4,13 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 import os
-
-def recommend_input_energy(elements, include=None, exclude=None, margin_percent=20, max_energy_keV=35, plot=True, save_plot=False, filename="recommended_energy_plot.png", save_pdf=False, pdf_filename="xrf_report.pdf"):
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QWidget, QMessageBox
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import sys
+# To install PyQt5, use the following command in your terminal or command prompt:
+# pip install PyQt5
+def recommend_input_energy(elements, include=None, exclude=None, margin_percent=20, min_energy_keV = 2, max_energy_keV=35, plot=True, save_plot=False, filename="recommended_energy_plot.png", save_pdf=False, pdf_filename="xrf_report.pdf"):
     """
     Recommend input X-ray energy based on specified include/exclude lists, with plotting and PDF report.
     
@@ -54,7 +59,6 @@ def recommend_input_energy(elements, include=None, exclude=None, margin_percent=
             edge_type = 'L3'
         else:
             print(f"Warning: No usable K or L3 edge found for {elem}")
-        
         if chosen_edge:
             edge_info[elem] = (edge_type, chosen_edge)
             candidate_edges.append(chosen_edge)
@@ -62,8 +66,10 @@ def recommend_input_energy(elements, include=None, exclude=None, margin_percent=
     if not candidate_edges:
         raise ValueError("No suitable edges found under the maximum allowed energy.")
 
+    #print(chosen_edge)
     highest_edge = max(candidate_edges)
     recommended_energy = highest_edge * (1 + margin_percent/100)
+    print(f"Recommended energy (with margin): {recommended_energy/1000:.2f} keV and (highest edge: {highest_edge/1000:.2f} keV)")
 
     if recommended_energy/1000 > max_energy_keV:
         recommended_energy = max_energy_keV * 1000
@@ -74,7 +80,7 @@ def recommend_input_energy(elements, include=None, exclude=None, margin_percent=
         emission_lines_info[elem] = []
         for line_name, line in lines.items():
             # Include K and L lines only
-            if line.energy <= recommended_energy and line.energy > 4000:  # Exclude lines below 2 keV
+            if line.energy <= recommended_energy and line.energy > min_energy_keV*1000:  # Exclude lines below 2 keV
                 print  (f"Element: {elem}, Line: {line_name}, Energy: {line.energy/1000:.2f} keV")
                 emission_lines_info[elem].append((line_name, line.energy, line.intensity))
 
@@ -163,27 +169,149 @@ def recommend_input_energy(elements, include=None, exclude=None, margin_percent=
 
     return recommended_energy, edge_info, emission_lines_info
 
-# Example usage:
-elements = ['Bi', 'Cu', 'V', 'O', 'Si']
-include_elements = ['Bi', 'Cu', 'V']  # Only include these elements
-exclude_elements = ['O', 'Si']  # Exclude 'Ni'
+class XRFInputGUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("XRF Input Energy Configuration")
+        self.setGeometry(100, 100, 1200, 800)
 
-energy, edges, emissions = recommend_input_energy(
-    elements,
-    include=include_elements,
-    exclude=exclude_elements,
-    save_plot=True,
-    filename="xrf_recommended_energy_with_emissions_and_intensity.png",
-    save_pdf=True,
-    pdf_filename="xrf_report_with_emissions_and_intensity.pdf"
-)
+        self.initUI()
 
-print(f"\nRecommended input energy: {energy/1000:.2f} keV")
-print("Edge energies used:")
-for elem, (etype, evalue) in edges.items():
-    print(f"  {elem}: {etype}-edge at {evalue/1000:.2f} keV")
+    def initUI(self):
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout()
 
-print("\nEmission lines and intensities:")
-for elem, lines in emissions.items():
-    for (line, energy, intensity) in lines:
-        print(f"  {elem}: {line} at {energy/1000:.2f} keV, Intensity: {intensity:.2f}")
+        # Elements input
+        self.elements_label = QLabel("Elements (comma-separated):")
+        self.elements_input = QLineEdit()
+        layout.addWidget(self.elements_label)
+        layout.addWidget(self.elements_input)
+
+        # Exclude elements input
+        self.exclude_label = QLabel("Exclude Elements (comma-separated):")
+        self.exclude_input = QLineEdit()
+        layout.addWidget(self.exclude_label)
+        layout.addWidget(self.exclude_input)
+
+        # Low energy limit input
+        self.low_energy_label = QLabel("Low Energy Limit for Emission Output (keV, default 2):")
+        self.low_energy_input = QLineEdit()
+        self.low_energy_input.setPlaceholderText("2")
+        layout.addWidget(self.low_energy_label)
+        layout.addWidget(self.low_energy_input)
+
+        # Save plot checkbox
+        self.save_plot_checkbox = QCheckBox("Save Plot")
+        layout.addWidget(self.save_plot_checkbox)
+
+        # Save PDF checkbox
+        self.save_pdf_checkbox = QCheckBox("Save PDF")
+        layout.addWidget(self.save_pdf_checkbox)
+        # Plot canvas
+        self.plot_canvas = FigureCanvas(Figure(figsize=(12, 10)))
+        layout.addWidget(self.plot_canvas)
+
+        # Run button
+        self.run_button = QPushButton("Run")
+        self.run_button.clicked.connect(self.run_recommendation)
+        layout.addWidget(self.run_button)
+        central_widget.setLayout(layout)
+
+    def run_recommendation(self):
+        try:
+            # Get user inputs
+            elements = [e.strip() for e in self.elements_input.text().split(",") if e.strip()]
+            exclude_elements = [e.strip() for e in self.exclude_input.text().split(",") if e.strip()]
+            include_elements = [e for e in elements if e not in exclude_elements]
+            print(f"Include elements: {include_elements}")
+            low_energy_limit = float(self.low_energy_input.text()) if self.low_energy_input.text().strip() else 2.0
+            save_plot = self.save_plot_checkbox.isChecked()
+            save_pdf = self.save_pdf_checkbox.isChecked()
+            # Run the function without plotting
+            recommend_energy, edges, emissions = recommend_input_energy(
+                elements,
+                include=include_elements,
+                exclude=exclude_elements,
+                margin_percent=20.0,
+                min_energy_keV=low_energy_limit,
+                max_energy_keV=35,
+                plot=False,  # Disable plotting in the function
+                save_plot=save_plot,
+                filename="xrf_recommended_energy_with_emissions_and_intensity.png",
+                save_pdf=save_pdf,
+                pdf_filename="xrf_report_with_emissions_and_intensity.pdf"
+            )
+
+            # Embed the plot in the GUI
+            self.plot_canvas.figure.clear()
+            ax = self.plot_canvas.figure.add_subplot(111)
+            element_colors = plt.cm.tab20.colors
+            element_color_map = {elem: element_colors[i % len(element_colors)] for i, elem in enumerate(elements)}
+
+            # Plot edges
+            for elem, (etype, evalue) in edges.items():
+                marker_color = element_color_map[elem]
+                ax.plot(evalue / 1000, 0, 'o', color=marker_color, label=f"{elem} {etype}-edge ({evalue / 1000:.2f} keV)")
+
+            # Plot emission lines
+            for elem, lines in emissions.items():
+                for (label, energy, intensity) in lines:
+                    marker_color = element_color_map[elem]
+                    ax.plot(energy / 1000, intensity, 'x', color=marker_color)
+                    ax.text(energy / 1000, intensity, f"{elem} {label}", rotation=90, fontsize=12, ha='center', va='top')
+
+            ax.axvline(recommend_energy / 1000, color='red', linestyle='--', label=f"Recommended Energy ({recommend_energy / 1000:.2f} keV)")
+            ax.set_xlabel('Energy (keV)')
+            ax.set_yticks([])
+            ax.set_title('Absorption Edges, Emission Lines, and Recommended Input Energy')
+            ax.grid(True, which='both', linestyle='--', alpha=0.5)
+            ax.legend(loc='best', fontsize=8)
+            self.plot_canvas.draw()
+            #     save_plot=save_plot,
+            #     filename="xrf_recommended_energy_with_emissions_and_intensity.png",
+            #     save_pdf=save_pdf,
+            #     pdf_filename="xrf_report_with_emissions_and_intensity.pdf"
+            # )
+
+            # Show results
+            result_message = f"Recommended input energy: {energy/1000:.2f} keV\n\nEdge energies used:\n"
+            for elem, (etype, evalue) in edges.items():
+                result_message += f"  {elem}: {etype}-edge at {evalue/1000:.2f} keV\n"
+
+            result_message += "\nEmission lines and intensities:\n"
+            for elem, lines in emissions.items():
+                for (line, energy, intensity) in lines:
+                    result_message += f"  {elem}: {line} at {energy/1000:.2f} keV, Intensity: {intensity:.2f}\n"
+
+            QMessageBox.information(self, "Results", result_message)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    gui = XRFInputGUI()
+    gui.show()
+    sys.exit(app.exec_())
+
+# energy, edges, emissions = recommend_input_energy(
+#     elements,
+#     include=include_elements,
+#     exclude=exclude_elements,
+#     save_plot=True,
+#     filename="xrf_recommended_energy_with_emissions_and_intensity.png",
+#     save_pdf=True,
+#     pdf_filename="xrf_report_with_emissions_and_intensity.pdf"
+# )
+
+# print(f"\nRecommended input energy: {energy/1000:.2f} keV")
+# print("Edge energies used:")
+# for elem, (etype, evalue) in edges.items():
+#     print(f"  {elem}: {etype}-edge at {evalue/1000:.2f} keV")
+
+# print("\nEmission lines and intensities:")
+# for elem, lines in emissions.items():
+#     for (line, energy, intensity) in lines:
+#         print(f"  {elem}: {line} at {energy/1000:.2f} keV, Intensity: {intensity:.2f}")
