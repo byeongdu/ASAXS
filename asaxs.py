@@ -2,7 +2,9 @@ import numpy as np
 import xraydb
 import sys
 import matplotlib.pyplot as plt
-
+from scipy.optimize import minimize
+from lmfit import Parameters 
+from lmfit import minimize as lmfit_minimize
 # Function to load numeric data from an ASCII text file
 def load_ascii_data(file_path):
     # data format : AtomicN, E_1, E_2, E_3, ... (first row)
@@ -48,6 +50,79 @@ def create_mx3_array(energies, fp, fdp):
     array[:, 2] = (fp**2 + fdp**2)
     return array
 
+def objective_function(x, A, Im):
+    # x should be Iq0, Iq_cross, Iq_resonant
+    #print(x)
+    #print(A[0])
+    #print(Im.T)
+    #print(A[0][:,0]*x[0] + 2*A[0][:,1]*x[1] + A[0][:,2])
+    # 1*Iq0 + 2*fp*Iq_cross + (fp^2 + fdp^2)*Iq_resonant
+    return np.sum(np.abs(Im.T - (A[:,0]*x[0] + 2*A[:,1]*x[1] + A[:,2]*x[2]))**2)
+    #return np.sum(np.array([np.sum([A[i,j]*x[j]-Im[i] for j in range(len(x))]) for i in range(A.shape[0])])**2)
+
+def lmfit_finderrbars_new(x, fp, fpp, I, Ierr):
+    params=Parameters()
+    params.add('Io',value=x[0],min=1e-6,vary=True)
+    params.add('Ir',value=x[2],min=1e-10,vary=True)
+    params.add('alf',value=0.95,min=-1.0,max=1.0,vary=True)
+    result=lmfit_minimize(residual_new, params, args=(fp,fpp,I, Ierr))
+    rpars=result.params
+    return rpars['Io'].value, rpars['Io'].stderr, rpars['Ir'].value, rpars['Ir'].stderr, rpars['alf'].value, rpars['alf'].stderr, result.redchi
+
+def residual_new(param, fp, fpp, I, Ierr):
+    Io, Ir, alf = param['Io'].value, param['Ir'].value, param['alf'].value
+    return (I-(Io+(fp**2+fpp**2)*Ir+2*np.sqrt(Io*Ir)*(fp*alf+fpp*np.sqrt(1-alf**2))))/Ierr
+
+def fit(A, Im):
+    # Fit the data using least squares
+    # A is the design matrix and Im is the measured intensities
+    # We will use a regularization term to avoid overfitting
+    lambda_reg = 1e-6  # small regularization factor
+    A_reg = A.T @ A + lambda_reg * np.identity(A.shape[1])
+    b_reg = A.T @ Im.T
+
+    Iq = np.linalg.solve(A_reg, b_reg)
+    residuals = np.linalg.norm(A @ Iq - Im.T, axis=0)  # Compute residuals for each energy
+    rank = np.linalg.matrix_rank(A)
+    s = np.linalg.svd(A, compute_uv=False)
+    return Iq, residuals, rank, s
+
+def fit2(fp, dfp, Im):
+    cons=({'type': 'ineq', 'fun': lambda x: x[0]},
+            {'type': 'ineq', 'fun': lambda x: x[2]},)
+    Iq = []
+    tot = []
+    Ierr = []
+    sh = Im.shape
+    for i in range(sh[0]):
+        Io, Ioerr, Ir, Irerr, alf, alferr, redchi1 = lmfit_finderrbars_new([0.0,0.0,0.0], fp, dfp, Im[i,:], np.sqrt(Im[i,:]))
+        Ic = np.sqrt(Io*Ir)*alf
+        if Ioerr is None:
+            Ioerr=0.1*Io
+        if Irerr is None:
+            Irerr=0.1*Ir
+        if alferr is None:
+            alferr=0.1*alf
+        Icerr = np.sqrt(Ioerr ** 2 / Io + Irerr ** 2 / Ir + alferr**2)
+        x1, x1err, x2, x2err, x3, x3err = Io, Ioerr, Ic, Icerr, Ir, Irerr
+        total_new=Io+(fp**2+dfp**2)*Ir+2*np.sqrt(Io*Ir)*(fp*alf+dfp*np.sqrt(1-alf**2))
+        Iq.append([x1, x2, x3])
+        tot.append(total_new)
+        Ierr.append([x1err, x2err, x3err])
+    return np.array(Iq), np.array(tot), np.array(Ierr)
+
+def fit3(A, Im):
+    cons=({'type': 'ineq', 'fun': lambda x: x[0]},
+            {'type': 'ineq', 'fun': lambda x: x[2]},)
+    Iq = []
+    sh = Im.shape
+    for i in range(sh[0]):
+        res=minimize(objective_function,[0.0,0.0,0.0],args=(A,Im[i,:]),
+                     constraints=cons,bounds=((0,None),(None,None),(0,None)))
+        #print(res)
+        Iq.append(res.x)
+    return np.array(Iq)
+
 def compute_Iq(q, Im, energies, element):
     # Compute Iq using the matrix A and the q values
     # This is a placeholder function. The actual computation will depend on the specific model used.
@@ -75,20 +150,18 @@ def compute_Iq(q, Im, energies, element):
     A = create_mx3_array(energies, fp=fp, fdp   =fdp)
     # Solve for Iq using least squares
     #Iq, residuals, rank, s = np.linalg.lstsq(A, Im.T, rcond=None)
-    lambda_reg = 1e-6  # small regularization factor
-    A_reg = A.T @ A + lambda_reg * np.identity(A.shape[1])
-    b_reg = A.T @ Im.T
-
-    Iq = np.linalg.solve(A_reg, b_reg)
-    residuals = np.linalg.norm(A @ Iq - Im.T, axis=0)  # Compute residuals for each energy
-    rank = np.linalg.matrix_rank(A)
-    s = np.linalg.svd(A, compute_uv=False)
-    print(f"Rank of A: {rank}")
-    print(f"Singular values of A: {s}")
-    print(f"Fit residuals: {residuals}")
-    print(f"A shape: {A.shape[0]}")
-    Iq = np.array(Iq).T  # Transpose to match the expected output shape
-    residuals = np.array(residuals).T  # Transpose to match the expected output shape
+    Iq, tot, Ierr = fit2(fp, fdp, Im)
+    print(Ierr.shape)
+    residuals = Ierr
+    #residuals = np.linalg.norm(A @ Iq - Im.T, axis=0)  # Compute residuals for each energy
+    #rank = np.linalg.matrix_rank(A)
+    #s = np.linalg.svd(A, compute_uv=False)
+    #print(f"Rank of A: {rank}")
+    #print(f"Singular values of A: {s}")
+    #print(f"Fit residuals: {residuals}")
+    #print(f"A shape: {A.shape[0]}")
+    #Iq = np.array(Iq).T  # Transpose to match the expected output shape
+    #residuals = np.array(residuals).T  # Transpose to match the expected output shape
     # Plot Iq vs q for all three columns
     plt.figure(figsize=(12, 6))
 
