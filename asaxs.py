@@ -63,8 +63,10 @@ def objective_function(x, A, Im):
 def lmfit_finderrbars_new(x, fp, fpp, I, Ierr):
     params=Parameters()
     params.add('Io',value=x[0],min=1e-6,vary=True)
-    params.add('Ir',value=x[2],min=1e-10,vary=True)
-    params.add('alf',value=0.95,min=-1.0,max=1.0,vary=True)
+    params.add('Ir',value=x[1],min=1e-10,vary=True)
+    params.add('alf',value=x[2],min=-1.0,max=1.0,vary=True)
+    if I[0] ==0:
+        return 1, 1, 1, 1, 1, 1, 1
     result=lmfit_minimize(residual_new, params, args=(fp,fpp,I, Ierr))
     rpars=result.params
     return rpars['Io'].value, rpars['Io'].stderr, rpars['Ir'].value, rpars['Ir'].stderr, rpars['alf'].value, rpars['alf'].stderr, result.redchi
@@ -88,14 +90,22 @@ def fit(A, Im):
     return Iq, residuals, rank, s
 
 def fit2(fp, dfp, Im):
-    cons=({'type': 'ineq', 'fun': lambda x: x[0]},
-            {'type': 'ineq', 'fun': lambda x: x[2]},)
     Iq = []
     tot = []
     Ierr = []
     sh = Im.shape
+    Io = Im[0][0]
+    Ir = Im[0][0]/1E3
+    print(Ir, Io)
+    alf = 0.95
     for i in range(sh[0]):
-        Io, Ioerr, Ir, Irerr, alf, alferr, redchi1 = lmfit_finderrbars_new([0.0,0.0,0.0], fp, dfp, Im[i,:], np.sqrt(Im[i,:]))
+        if i==0:
+            Ncycle = [0,1,2]
+        else:
+            Ncycle = [1]
+        for k in Ncycle:
+            xv = [Io, Ir, alf]
+            Io, Ioerr, Ir, Irerr, alf, alferr, redchi1 = lmfit_finderrbars_new(xv, fp, dfp, Im[i,:], np.sqrt(Im[i,:]))
         Ic = np.sqrt(Io*Ir)*alf
         if Ioerr is None:
             Ioerr=0.1*Io
@@ -133,8 +143,8 @@ def compute_Iq(q, Im, energies, element):
     # Compute f1 and f2 for the given element and energies
     # energies should be in keV
     fp, fdp = compute_f1_f2(energies, xraydb_element)
-    print(f"f1 (fp): {fp}")
-    print(f"f2 (fdp): {fdp}")
+    #print(f"f1 (fp): {fp}")
+    #print(f"f2 (fdp): {fdp}")
     # Plot f1 (fp) and f2 (fdp) vs energy
     plt.figure()
     plt.plot(energies, fp, label="f1 (fp)")
@@ -200,9 +210,14 @@ def save_results(file_path, A, q, Iq, err):
     # Save the results to a new file
     output_file = file_path.rsplit(".", 1)[0] + "_Iq.txt"
     with open(output_file, 'w') as f:
-        f.write("% q Iq0 Iq_cross Iq_resonant Residual\n")
-        for qi, iq, er in zip(q, Iq, err):
-            f.write(f"{qi} {iq[0]} {iq[1]} {iq[2]} {er}\n")
+        if err.shape[1] == 3:
+            f.write("% q Iq0 Iq_cross Iq_resonant Iq0_err Iq_cross_err Iq_resonant_err\n")
+            for qi, iq, er in zip(q, Iq, err):
+                f.write(f"{qi} {iq[0]} {iq[1]} {iq[2]} {er[0]} {er[1]} {er[2]}\n")
+        else:
+            f.write("% q Iq0 Iq_cross Iq_resonant Residual\n")
+            for qi, iq, er in zip(q, Iq, err):
+                f.write(f"{qi} {iq[0]} {iq[1]} {iq[2]} {er}\n")
     print(f"Results saved to {output_file}")
 
 # Example usage
