@@ -62,9 +62,9 @@ def objective_function(x, A, Im):
 
 def lmfit_finderrbars_new(x, fp, fpp, I, Ierr):
     params=Parameters()
-    params.add('Io',value=x[0],min=1e-6,vary=True)
-    params.add('Ir',value=x[1],min=1e-10,vary=True)
-    params.add('alf',value=x[2],min=-1.0,max=1.0,vary=True)
+    params.add('Io',value=x[0],min=x[0]/1E3,max=x[0]*1E3,vary=True)
+    params.add('Ir',value=x[1],min=x[1]/1E8,max=x[0]*1E3,vary=True)
+    params.add('alf',value=x[2],min=0,max=np.pi,vary=True)
     if I[0] ==0:
         return 1, 1, 1, 1, 1, 1, 1
     result=lmfit_minimize(residual_new, params, args=(fp,fpp,I, Ierr))
@@ -73,7 +73,12 @@ def lmfit_finderrbars_new(x, fp, fpp, I, Ierr):
 
 def residual_new(param, fp, fpp, I, Ierr):
     Io, Ir, alf = param['Io'].value, param['Ir'].value, param['alf'].value
-    return (I-(Io+(fp**2+fpp**2)*Ir+2*np.sqrt(Io*Ir)*(fp*alf+fpp*np.sqrt(1-alf**2))))/Ierr
+    #df = np.sum(((I-sturhman(Io, Ir, alf, fp, fpp))/Ierr)**2)/3.0 # chi squared.
+    #print(df, Ierr)
+    return (I-sturhman(Io, Ir, alf, fp, fpp))/Ierr
+
+def sturhman(Io, Ir, alf, fp, fpp):
+    return Io + (fp**2+fpp**2)*Ir + 2*np.sqrt(np.abs(Io)*np.abs(Ir))*fp*np.cos(alf)
 
 def fit(A, Im):
     # Fit the data using least squares
@@ -95,9 +100,8 @@ def fit2(fp, dfp, Im):
     Ierr = []
     sh = Im.shape
     Io = Im[0][0]
-    Ir = Im[0][0]/1E3
-    print(Ir, Io)
-    alf = 0.95
+    Ir = Im[0][0]/1E4
+    alf = 0.01
     for i in range(sh[0]):
         if i==0:
             Ncycle = [0,1,2]
@@ -106,7 +110,7 @@ def fit2(fp, dfp, Im):
         for k in Ncycle:
             xv = [Io, Ir, alf]
             Io, Ioerr, Ir, Irerr, alf, alferr, redchi1 = lmfit_finderrbars_new(xv, fp, dfp, Im[i,:], np.sqrt(Im[i,:]))
-        Ic = np.sqrt(Io*Ir)*alf
+        Ic = 2*np.sqrt(Io*Ir)*fp[0]*np.cos(alf)
         if Ioerr is None:
             Ioerr=0.1*Io
         if Irerr is None:
@@ -115,7 +119,7 @@ def fit2(fp, dfp, Im):
             alferr=0.1*alf
         Icerr = np.sqrt(Ioerr ** 2 / Io + Irerr ** 2 / Ir + alferr**2)
         x1, x1err, x2, x2err, x3, x3err = Io, Ioerr, Ic, Icerr, Ir, Irerr
-        total_new=Io+(fp**2+dfp**2)*Ir+2*np.sqrt(Io*Ir)*(fp*alf+dfp*np.sqrt(1-alf**2))
+        total_new=Io+(fp[0]**2+dfp[0]**2)*Ir+Ic
         Iq.append([x1, x2, x3])
         tot.append(total_new)
         Ierr.append([x1err, x2err, x3err])
@@ -161,7 +165,6 @@ def compute_Iq(q, Im, energies, element):
     # Solve for Iq using least squares
     #Iq, residuals, rank, s = np.linalg.lstsq(A, Im.T, rcond=None)
     Iq, tot, Ierr = fit2(fp, fdp, Im)
-    print(Ierr.shape)
     residuals = Ierr
     #residuals = np.linalg.norm(A @ Iq - Im.T, axis=0)  # Compute residuals for each energy
     #rank = np.linalg.matrix_rank(A)
