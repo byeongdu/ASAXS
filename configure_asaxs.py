@@ -158,7 +158,7 @@ class ASAXSconfig(QWidget):
         self.canvas.draw()
 
     def save_results(self):
-        if not self.selected_energies:
+        if len(self.selected_energies)==0:
             self.result_text.setText("No results to save. Please run the analysis first.")
             return
 
@@ -172,6 +172,7 @@ class ASAXSconfig(QWidget):
                 for en, f1v in zip(self.selected_energies, self.selected_f1):
                     f.write(f"{en:.1f}\t{f1v:.3f}\n")
             self.result_text.append(f"\nResults saved to {filepath}")
+        np.savetxt(f"{self.element}_selected_energies.txt", self.selected_energies, fmt="%.3f")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
