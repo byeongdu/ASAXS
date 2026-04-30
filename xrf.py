@@ -1,13 +1,23 @@
 import xraydb
-import matplotlib.pyplot as plt
+import numpy as np
+import pyqtgraph as pg
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QFileDialog, QWidget, QMessageBox
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 import sys
+
+_TAB20 = [
+    '#1f77b4', '#aec7e8', '#ff7f0e', '#ffbb78', '#2ca02c',
+    '#98df8a', '#d62728', '#ff9896', '#9467bd', '#c5b0d5',
+    '#8c564b', '#c49c94', '#e377c2', '#f7b6d2', '#7f7f7f',
+    '#c7c7c7', '#bcbd22', '#dbdb8d', '#17becf', '#9edae5',
+]
+
+def _gaussian(x, center, area, fwhm):
+    sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
+    return (area / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - center) / sigma) ** 2)
 # To install PyQt5, use the following command in your terminal or command prompt:
 # pip install PyQt5
 def recommend_input_energy(elements, include=None, exclude=None, margin_percent=20, min_energy_keV = 2, max_energy_keV=35, plot=True, save_plot=False, filename="recommended_energy_plot.png", save_pdf=False, pdf_filename="xrf_report.pdf"):
@@ -86,51 +96,49 @@ def recommend_input_energy(elements, include=None, exclude=None, margin_percent=
 
     # Plotting
     if plot or save_plot:
-        fig, ax = plt.subplots(figsize=(10, 7))
-        
-        # Plot edges
-        element_colors = plt.cm.tab20.colors  # Use a colormap for distinct colors
-        element_color_map = {elem: element_colors[i % len(element_colors)] for i, elem in enumerate(elements)}
+        _app = QApplication.instance() or QApplication([])
+        win = pg.GraphicsLayoutWidget(title="XRF Energy Analysis")
+        p = win.addPlot(title='Absorption Edges, Emission Lines, and Recommended Input Energy')
+        p.setLabel('bottom', 'Energy (keV)')
+        p.getAxis('left').hide()
+        p.showGrid(x=True, y=True)
+        p.addLegend()
 
-        marker_style = 'o'  # Closed circle for absorption edges
+        element_color_map = {elem: _TAB20[i % len(_TAB20)] for i, elem in enumerate(elements)}
+
+        # Plot edges
         for elem, (etype, evalue) in edge_info.items():
-            marker_color = element_color_map[elem]
-            ax.plot(evalue/1000, 0, marker_style, color=marker_color, label=f"{elem} {etype}-edge ({evalue/1000:.2f} keV)")
+            color = element_color_map[elem]
+            p.plot([evalue/1000], [0], pen=None, symbol='o', symbolBrush=color, symbolSize=10,
+                   name=f"{elem} {etype}-edge ({evalue/1000:.2f} keV)")
 
         # Plot emission lines
-        marker_style = 'x'  # 'x' for emission lines
         for elem, lines in emission_lines_info.items():
-            for (label, energy, intensity) in lines:
-                marker_color = element_color_map[elem]
-                ax.plot(energy/1000, intensity, marker_style, color=marker_color)
-                ax.text(energy/1000, intensity, f"{elem} {label}", rotation=90, fontsize=8, ha='center', va='top')
-        # for elem, (etype, evalue) in edge_info.items():
-        #     marker_color = 'blue' if etype == 'K' else 'green'
-        #     ax.plot(evalue/1000, 0, 'o', color=marker_color, label=f"{elem} {etype}-edge ({evalue/1000:.2f} keV)")
-        
-        # # Plot emission lines
-        # for elem, lines in emission_lines_info.items():
-        #     for (label, energy, intensity) in lines:
-        #         ax.plot(energy/1000, intensity, 'x', color='orange')
-        #         ax.text(energy/1000, -0.2, f"{elem} {label}", rotation=90, fontsize=8, ha='center', va='top')
-        
-        ax.axvline(recommended_energy/1000, color='red', linestyle='--', label=f"Recommended Energy ({recommended_energy/1000:.2f} keV)")
+            color = element_color_map[elem]
+            for (lbl, energy, intensity) in lines:
+                p.plot([energy/1000], [intensity], pen=None, symbol='x',
+                       symbolPen=pg.mkPen(color, width=2), symbolSize=10)
+                text = pg.TextItem(f"{elem} {lbl}", anchor=(0.5, 1), angle=90)
+                text.setPos(energy/1000, intensity)
+                p.addItem(text)
 
-        ax.set_xlabel('Energy (keV)')
-        ax.set_yticks([])
-        ax.set_title('Absorption Edges, Emission Lines, and Recommended Input Energy')
-        ax.grid(True, which='both', linestyle='--', alpha=0.5)
-        ax.legend(loc='best', fontsize=8)
-        plt.tight_layout()
+        vline = pg.InfiniteLine(pos=recommended_energy/1000, angle=90,
+                                pen=pg.mkPen('r', style=pg.QtCore.Qt.DashLine, width=2))
+        p.addItem(vline)
+        p.plot([], [], pen=pg.mkPen('r', style=pg.QtCore.Qt.DashLine, width=2),
+               name=f"Recommended Energy ({recommended_energy/1000:.2f} keV)")
 
         if save_plot:
-            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            exporter = pg.exporters.ImageExporter(p)
+            exporter.parameters()['width'] = 1500
+            exporter.export(filename)
             print(f"Plot saved as: {filename}")
-        
+
         if plot:
-            plt.show()
+            win.show()
+            _app.exec_()
         else:
-            plt.close()
+            win.close()
 
     # Create PDF
     if save_pdf:
@@ -201,6 +209,13 @@ class XRFInputGUI(QMainWindow):
         layout.addWidget(self.low_energy_label)
         layout.addWidget(self.low_energy_input)
 
+        # Peak width input
+        self.peak_width_label = QLabel("Peak Width (keV FWHM, 0 = markers only):")
+        self.peak_width_input = QLineEdit()
+        self.peak_width_input.setPlaceholderText("0")
+        layout.addWidget(self.peak_width_label)
+        layout.addWidget(self.peak_width_input)
+
         # Save plot checkbox
         self.save_plot_checkbox = QCheckBox("Save Plot")
         layout.addWidget(self.save_plot_checkbox)
@@ -209,7 +224,7 @@ class XRFInputGUI(QMainWindow):
         self.save_pdf_checkbox = QCheckBox("Save PDF")
         layout.addWidget(self.save_pdf_checkbox)
         # Plot canvas
-        self.plot_canvas = FigureCanvas(Figure(figsize=(12, 10)))
+        self.plot_canvas = pg.PlotWidget()
         layout.addWidget(self.plot_canvas)
 
         # Run button
@@ -243,48 +258,70 @@ class XRFInputGUI(QMainWindow):
                 pdf_filename="xrf_report_with_emissions_and_intensity.pdf"
             )
 
+            peak_width_text = self.peak_width_input.text().strip()
+            peak_width = float(peak_width_text) if peak_width_text else 0.0
+
             # Embed the plot in the GUI
-            self.plot_canvas.figure.clear()
-            ax = self.plot_canvas.figure.add_subplot(111)
-            element_colors = plt.cm.tab20.colors
-            element_color_map = {elem: element_colors[i % len(element_colors)] for i, elem in enumerate(elements)}
+            self.plot_canvas.clear()
+            self.plot_canvas.setLabel('bottom', 'Energy (keV)')
+            self.plot_canvas.setTitle('Absorption Edges, Emission Lines, and Recommended Input Energy')
+            self.plot_canvas.showGrid(x=True, y=True)
+            self.plot_canvas.addLegend()
 
-            # Plot edges
+            element_color_map = {elem: _TAB20[i % len(_TAB20)] for i, elem in enumerate(elements)}
+
+            # Plot absorption edges
             for elem, (etype, evalue) in edges.items():
-                marker_color = element_color_map[elem]
-                ax.plot(evalue / 1000, 0, 'o', color=marker_color, label=f"{elem} {etype}-edge ({evalue / 1000:.2f} keV)")
+                color = element_color_map[elem]
+                self.plot_canvas.plot([evalue/1000], [0], pen=None, symbol='o', symbolBrush=color, symbolSize=10,
+                                      name=f"{elem} {etype}-edge ({evalue/1000:.2f} keV)")
 
-            # Plot emission lines
-            for elem, lines in emissions.items():
-                for (label, energy, intensity) in lines:
-                    marker_color = element_color_map[elem]
-                    ax.plot(energy / 1000, intensity, 'x', color=marker_color)
-                    ax.text(energy / 1000, intensity, f"{elem} {label}", rotation=90, fontsize=12, ha='center', va='top')
+            if peak_width > 0:
+                # Gaussian mode: sum Gaussians per element and plot curves
+                self.plot_canvas.setLabel('left', 'Relative Intensity')
+                sigma = peak_width / (2 * np.sqrt(2 * np.log(2)))
+                all_energies_keV = [e/1000 for lines in emissions.values() for (_, e, _) in lines]
+                if all_energies_keV:
+                    x = np.linspace(max(0, min(all_energies_keV) - 4 * sigma),
+                                    max(all_energies_keV) + 4 * sigma, 3000)
+                    for elem, lines in emissions.items():
+                        if not lines:
+                            continue
+                        color = element_color_map[elem]
+                        y = sum(_gaussian(x, e/1000, intensity, peak_width) for (_, e, intensity) in lines)
+                        self.plot_canvas.plot(x, y, pen=pg.mkPen(color, width=2), name=elem)
+                        for (lbl, energy, intensity) in lines:
+                            peak_amp = intensity / (sigma * np.sqrt(2 * np.pi))
+                            text = pg.TextItem(f"{elem} {lbl}", anchor=(0.5, 1), angle=90)
+                            text.setPos(energy/1000, peak_amp)
+                            self.plot_canvas.addItem(text)
+            else:
+                # Marker mode: draw x symbols and text labels
+                self.plot_canvas.getAxis('left').hide()
+                for elem, lines in emissions.items():
+                    color = element_color_map[elem]
+                    for (lbl, energy, intensity) in lines:
+                        self.plot_canvas.plot([energy/1000], [intensity], pen=None, symbol='x',
+                                              symbolPen=pg.mkPen(color, width=2), symbolSize=10)
+                        text = pg.TextItem(f"{elem} {lbl}", anchor=(0.5, 1), angle=90)
+                        text.setPos(energy/1000, intensity)
+                        self.plot_canvas.addItem(text)
 
-            ax.axvline(recommend_energy / 1000, color='red', linestyle='--', label=f"Recommended Energy ({recommend_energy / 1000:.2f} keV)")
-            ax.set_xlabel('Energy (keV)')
-            ax.set_yticks([])
-            ax.set_title('Absorption Edges, Emission Lines, and Recommended Input Energy')
-            ax.grid(True, which='both', linestyle='--', alpha=0.5)
-            ax.legend(loc='best', fontsize=8)
-            self.plot_canvas.draw()
-            #     save_plot=save_plot,
-            #     filename="xrf_recommended_energy_with_emissions_and_intensity.png",
-            #     save_pdf=save_pdf,
-            #     pdf_filename="xrf_report_with_emissions_and_intensity.pdf"
-            # )
+            vline = pg.InfiniteLine(pos=recommend_energy/1000, angle=90,
+                                    pen=pg.mkPen('r', style=pg.QtCore.Qt.DashLine, width=2))
+            self.plot_canvas.addItem(vline)
+            self.plot_canvas.plot([], [], pen=pg.mkPen('r', style=pg.QtCore.Qt.DashLine, width=2),
+                                  name=f"Recommended Energy ({recommend_energy/1000:.2f} keV)")
 
-            # Show results
-            result_message = f"Recommended input energy: {energy/1000:.2f} keV\n\nEdge energies used:\n"
+            # Print results to console
+            print("\nEdge energies used:")
             for elem, (etype, evalue) in edges.items():
-                result_message += f"  {elem}: {etype}-edge at {evalue/1000:.2f} keV\n"
+                print(f"  {elem}: {etype}-edge at {evalue/1000:.2f} keV")
 
-            result_message += "\nEmission lines and intensities:\n"
+            print("\nEmission lines and intensities:")
             for elem, lines in emissions.items():
                 for (line, energy, intensity) in lines:
-                    result_message += f"  {elem}: {line} at {energy/1000:.2f} keV, Intensity: {intensity:.2f}\n"
-
-            QMessageBox.information(self, "Results", result_message)
+                    print(f"  {elem}: {line} at {energy/1000:.2f} keV, Intensity: {intensity:.2f}")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))

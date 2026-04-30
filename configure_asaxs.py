@@ -1,13 +1,10 @@
 import sys
 import numpy as np
-import matplotlib.pyplot as plt
+import pyqtgraph as pg
 import xraydb
 
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QFileDialog
 from PyQt5.QtCore import Qt
-
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 
 class ASAXSconfig(QWidget):
     def __init__(self):
@@ -53,10 +50,9 @@ class ASAXSconfig(QWidget):
         self.save_button.clicked.connect(self.save_results)
         self.layout.addWidget(self.save_button)
 
-        # Matplotlib figure
-        self.figure = Figure(figsize=(5, 4))
-        self.canvas = FigureCanvas(self.figure)
-        self.layout.addWidget(self.canvas)
+        # pyqtgraph plot widget
+        self.plot_widget = pg.PlotWidget()
+        self.layout.addWidget(self.plot_widget)
 
         # Data containers
         self.selected_energies = []
@@ -109,9 +105,6 @@ class ASAXSconfig(QWidget):
 
     def start_analysis(self):
         self.result_text.clear()
-        self.figure.clear()
-        ax = self.figure.add_subplot(111)
-
         self.element = self.element_input.text().strip().capitalize()
 
         if not self.element:
@@ -148,14 +141,16 @@ class ASAXSconfig(QWidget):
         self.result_text.setText(output)
 
         # Plot
-        ax.plot(energies/1000, f1_values, label=f"{self.element} f1 curve")
-        ax.plot(self.selected_energies/1000, self.selected_f1, 'ro', label="Selected Points")
-        ax.set_xlabel("Energy (keV)")
-        ax.set_ylabel("f1")
-        ax.set_title(f"{self.element} - f1 curve near {edge_type}-edge")
-        ax.grid(True)
-        ax.legend()
-        self.canvas.draw()
+        self.plot_widget.clear()
+        self.plot_widget.setLabel('bottom', "Energy (keV)")
+        self.plot_widget.setLabel('left', "f1")
+        self.plot_widget.setTitle(f"{self.element} - f1 curve near {edge_type}-edge")
+        self.plot_widget.showGrid(x=True, y=True)
+        self.plot_widget.addLegend()
+        self.plot_widget.plot(energies/1000, f1_values, pen='b', name=f"{self.element} f1 curve")
+        self.plot_widget.plot(self.selected_energies/1000, self.selected_f1,
+                              pen=None, symbol='o', symbolBrush='r', symbolSize=8,
+                              name="Selected Points")
 
     def save_results(self):
         if len(self.selected_energies)==0:

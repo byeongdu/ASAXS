@@ -1,7 +1,9 @@
 import numpy as np
 import xraydb
 import sys
-import matplotlib.pyplot as plt
+import pyqtgraph as pg
+
+_windows = []
 from scipy.optimize import minimize
 from lmfit import Parameters 
 from lmfit import minimize as lmfit_minimize
@@ -150,15 +152,15 @@ def compute_Iq(q, Im, energies, element):
     #print(f"f1 (fp): {fp}")
     #print(f"f2 (fdp): {fdp}")
     # Plot f1 (fp) and f2 (fdp) vs energy
-    plt.figure()
-    plt.plot(energies, fp, label="f1 (fp)")
-    plt.plot(energies, fdp, label="f2 (fdp)")
-    plt.xlabel("Energy (keV)")
-    plt.ylabel("f1, f2")
-    plt.title(f"f1 and f2 vs Energy for {xraydb_element}")
-    plt.legend()
-    plt.grid()
-    plt.show()
+    win1 = pg.GraphicsLayoutWidget(title=f"f1 and f2 vs Energy for {xraydb_element}", show=True)
+    _windows.append(win1)
+    p1 = win1.addPlot(title=f"f1 and f2 vs Energy for {xraydb_element}")
+    p1.addLegend()
+    p1.plot(energies, fp, pen='b', name="f1 (fp)")
+    p1.plot(energies, fdp, pen='r', name="f2 (fdp)")
+    p1.setLabel('bottom', "Energy (keV)")
+    p1.setLabel('left', "f1, f2")
+    p1.showGrid(x=True, y=True)
     # Create the matrix A using the computed f1 and f2 values
     # and the energies
     A = create_mx3_array(energies, fp=fp, fdp   =fdp)
@@ -176,33 +178,30 @@ def compute_Iq(q, Im, energies, element):
     #Iq = np.array(Iq).T  # Transpose to match the expected output shape
     #residuals = np.array(residuals).T  # Transpose to match the expected output shape
     # Plot Iq vs q for all three columns
-    plt.figure(figsize=(12, 6))
+    win2 = pg.GraphicsLayoutWidget(title="ASAXS Results", show=True)
+    _windows.append(win2)
 
-    # Left subplot: q vs Im
-    plt.subplot(1, 2, 1)
+    # Left plot: q vs Im
+    p2 = win2.addPlot(title="Measured Intensities")
+    p2.setLogMode(x=True, y=True)
+    p2.setLabel('bottom', "q")
+    p2.setLabel('left', "I(q)_m")
+    p2.addLegend()
+    p2.showGrid(x=True, y=True)
+    colors = ['b', 'r', 'g', 'c', 'm', 'y', 'w']
     for i in range(Im.shape[1]):
-        plt.loglog(q, Im[:, i], label=f"Im_{energies[i]:.3f} keV")
-    plt.xlabel("q")
-    plt.ylabel("I(q)_m")
-    plt.title("Measured Intensities")
-    plt.legend()
-    plt.grid()
+        p2.plot(q, Im[:, i], pen=colors[i % len(colors)], name=f"Im_{energies[i]:.3f} keV")
 
-    # Right subplot: q vs Iq
-    plt.subplot(1, 2, 2)
-    plt.loglog(q, Iq[:, 0], 'o', label="Iq0")
-    plt.loglog(q, Iq[:, 1], 'o', label="Iq_cross")
-    plt.loglog(q, Iq[:, 2], 'o', label="Iq_resonant")
-    #plt.errorbar(q, Iq[:, 0], yerr=error, fmt='none', ecolor='red', capsize=3)
-    #plt.errorbar(q, Iq[:, 1], yerr=error, fmt='o', label="Iq_cross", capsize=3)
-    #plt.errorbar(q, Iq[:, 2], yerr=error, fmt='o', label="Iq_resonant", capsize=3)
-    plt.xlabel("q")
-    plt.ylabel("Iq")
-    plt.title("Three Components of Iq")
-    plt.legend()
-    plt.grid()
-    plt.tight_layout()
-    plt.show()
+    # Right plot: q vs Iq
+    p3 = win2.addPlot(title="Three Components of Iq")
+    p3.setLogMode(x=True, y=True)
+    p3.setLabel('bottom', "q")
+    p3.setLabel('left', "Iq")
+    p3.addLegend()
+    p3.showGrid(x=True, y=True)
+    p3.plot(q, Iq[:, 0], pen=None, symbol='o', symbolSize=5, name="Iq0")
+    p3.plot(q, Iq[:, 1], pen=None, symbol='o', symbolSize=5, name="Iq_cross")
+    p3.plot(q, Iq[:, 2], pen=None, symbol='o', symbolSize=5, name="Iq_resonant")
     return Iq, A, residuals
 
 def save_results(file_path, A, q, Iq, err):
@@ -225,6 +224,7 @@ def save_results(file_path, A, q, Iq, err):
 
 # Example usage
 if __name__ == "__main__":
+    app = pg.mkQApp("ASAXS")
     if len(sys.argv) <= 1:
         print("Usage: python asaxs.py <file_path>")
         print("Usage: python asaxs.py <file_path> <column_starting_to_include>")
@@ -238,3 +238,4 @@ if __name__ == "__main__":
     if q is not None and energies is not None:
         Iq, A, err = compute_Iq(q, Im[:,omit:], energies[omit:], element)  # Example element
         save_results(file_path, A, q, Iq, err)
+    pg.exec()
