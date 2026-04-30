@@ -6,6 +6,8 @@ import xraydb
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QFileDialog
 from PyQt5.QtCore import Qt
 
+pg.setConfigOptions(background='w', foreground='k')
+
 class ASAXSconfig(QWidget):
     def __init__(self):
         super().__init__()
@@ -62,6 +64,12 @@ class ASAXSconfig(QWidget):
         save_layout.addWidget(self.save_button)
         self.layout.addLayout(save_layout)
 
+        # Message log
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setFixedHeight(80)
+        self.layout.addWidget(self.log_text)
+
         # pyqtgraph plot widget
         self.plot_widget = pg.PlotWidget()
         self.layout.addWidget(self.plot_widget)
@@ -72,13 +80,16 @@ class ASAXSconfig(QWidget):
         self.element = ""
         self.edge_info = ""
 
+    def _log(self, msg):
+        self.log_text.append(msg)
+
     def get_absorption_edge(self, element, min_energy_keV=6, max_energy_keV=34):
         k_edge = xraydb.xray_edge(element, 'K')
         l3_edge = xraydb.xray_edge(element, 'L3')
 
         chosen_edge = None
         edge_type = None
-        print(f"Element: {element}, K-edge: {k_edge}, L3-edge: {l3_edge}")
+        self._log(f"Element: {element}, K-edge: {k_edge}, L3-edge: {l3_edge}")
         if k_edge and (min_energy_keV <= k_edge.energy/1000 <= max_energy_keV):
             chosen_edge = k_edge.energy
             edge_type = 'K'
@@ -187,7 +198,7 @@ class ASAXSconfig(QWidget):
                 f.write("Energy (eV)\tf1\n")
                 for en, f1v in zip(energies_out, f1_out):
                     f.write(f"{en:.1f}\t{f1v:.3f}\n")
-            self.result_text.append(f"\nResults saved to {filepath}")
+            self._log(f"Results saved to {filepath}")
         np.savetxt(f"{self.element}_selected_energies.txt", energies_out, fmt="%.3f")
 
 if __name__ == "__main__":
