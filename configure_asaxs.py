@@ -41,7 +41,7 @@ class ASAXSconfig(QWidget):
         self.mono_offset_label = QLabel("Mono Offset (keV):")
         input_layout.addWidget(self.mono_offset_label)
         self.mono_offset_input = QLineEdit()
-        self.mono_offset_input.setText("0.02")
+        self.mono_offset_input.setText("0.0")
         input_layout.addWidget(self.mono_offset_input)
 
         self.layout.addLayout(input_layout)
@@ -79,6 +79,8 @@ class ASAXSconfig(QWidget):
         self.selected_f1 = []
         self.element = ""
         self.edge_info = ""
+        self._vb2 = None
+        self._update_views = None
 
     def _log(self, msg):
         self.log_text.append(msg)
@@ -99,10 +101,11 @@ class ASAXSconfig(QWidget):
 
         return chosen_edge, edge_type
 
-    def get_f1_curve(self, element, edge_energy_eV, energy_range_eV=200, num_points=300):
-        energies = np.linspace(edge_energy_eV - energy_range_eV, edge_energy_eV, num_points)
+    def get_f1_curve(self, element, edge_energy_eV, energy_range_eV=200, num_points=300, above_eV=100):
+        energies = np.linspace(edge_energy_eV - energy_range_eV, edge_energy_eV + above_eV, num_points)
         f1_values = np.array([xraydb.f1_chantler(element, en) for en in energies])
-        return energies, f1_values
+        f2_values = np.array([xraydb.f2_chantler(element, en) for en in energies])
+        return energies, f1_values, f2_values
 
     def select_uniform_f1_points(self, energies, f1_values, num_points=15):
         sorted_idx = np.argsort(f1_values)
@@ -154,31 +157,70 @@ class ASAXSconfig(QWidget):
         
         self.edge_info = f"Using {edge_type}-edge at {edge_energy/1000:.2f} keV for {self.element}."
 
-        energies, f1_values = self.get_f1_curve(self.element, edge_energy, energy_range)
-        self.selected_energies, self.selected_f1 = self.select_uniform_f1_points(energies, f1_values, num_points)
+        energies, f1_values, f2_values = self.get_f1_curve(self.element, edge_energy, energy_range)
+        mask = energies <= edge_energy
+        self.selected_energies, self.selected_f1 = self.select_uniform_f1_points(
+            energies[mask], f1_values[mask], num_points)
         self.selected_energies = self.selected_energies + mono_offset * 1000
 
-        # Update text output
-        output = f"{self.edge_info}\n\nSelected {num_points} energy points:\n"
-        for en, f1 in zip(self.selected_energies, self.selected_f1):
-            output += f"  Energy: {en:.1f} eV, f1: {f1:.3f}\n"
-        
-        self.result_text.setText(output)
+        self._update_result_text()
+
+        # Clean up previous secondary ViewBox before clearing the plot
+        if self._vb2 is not None:
+            try:
+                self.plot_widget.getPlotItem().vb.sigResized.disconnect(self._update_views)
+            except Exception:
+                pass
+            self.plot_widget.scene().removeItem(self._vb2)
+            self._vb2 = None
 
         # Plot
         self.plot_widget.clear()
         self.plot_widget.setLabel('bottom', "Energy (keV)")
-        self.plot_widget.setLabel('left', "f1")
-        self.plot_widget.setTitle(f"{self.element} - f1 curve near {edge_type}-edge")
+        self.plot_widget.setLabel('left', "f1", color='b')
+        self.plot_widget.setTitle(f"{self.element} - f1 and f2 near {edge_type}-edge")
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.addLegend()
-        self.plot_widget.plot(energies/1000, f1_values, pen='b', name=f"{self.element} f1 curve")
+        self.plot_widget.plot(energies/1000, f1_values, pen=pg.mkPen('b', width=2), name="f1 curve")
         self.plot_widget.plot(self.selected_energies/1000, self.selected_f1,
                               pen=None, symbol='o', symbolBrush='r', symbolSize=8,
                               name="Selected Points")
 
+        # Secondary y-axis for f2
+        plot_item = self.plot_widget.getPlotItem()
+        self._vb2 = pg.ViewBox()
+        plot_item.showAxis('right')
+        plot_item.scene().addItem(self._vb2)
+        plot_item.getAxis('right').linkToView(self._vb2)
+        plot_item.getAxis('right').setLabel('f2', color='g')
+        self._vb2.setXLink(plot_item)
+        self._vb2.addItem(pg.PlotCurveItem(energies/1000, f2_values,
+                                           pen=pg.mkPen('g', width=2)))
+        # Dummy entry so f2 appears in the legend
+        self.plot_widget.plot([], [], pen=pg.mkPen('g', width=2), name="f2 curve")
+
+        def update_views():
+            self._vb2.setGeometry(plot_item.vb.sceneBoundingRect())
+            self._vb2.linkedViewChanged(plot_item.vb, self._vb2.XAxis)
+
+        self._update_views = update_views
+        update_views()
+        plot_item.vb.sigResized.connect(update_views)
+
+    def _update_result_text(self):
+        if len(self.selected_energies) == 0:
+            return
+        decreasing = self.order_button.isChecked()
+        energies_out = self.selected_energies[::-1] if decreasing else self.selected_energies
+        f1_out = self.selected_f1[::-1] if decreasing else self.selected_f1
+        output = f"{self.edge_info}\n\nSelected {len(energies_out)} energy points:\n"
+        for en, f1 in zip(energies_out, f1_out):
+            output += f"  Energy: {en:.1f} eV, f1: {f1:.3f}\n"
+        self.result_text.setText(output)
+
     def _toggle_order(self, checked):
         self.order_button.setText("Order: Decreasing ↓" if checked else "Order: Increasing ↑")
+        self._update_result_text()
 
     def save_results(self):
         if len(self.selected_energies) == 0:
