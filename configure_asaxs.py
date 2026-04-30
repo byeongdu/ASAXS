@@ -36,6 +36,12 @@ class ASAXSconfig(QWidget):
         self.energy_range_input.setText("200")
         input_layout.addWidget(self.energy_range_input)
 
+        self.mono_offset_label = QLabel("Mono Offset (keV):")
+        input_layout.addWidget(self.mono_offset_label)
+        self.mono_offset_input = QLineEdit()
+        self.mono_offset_input.setText("0.02")
+        input_layout.addWidget(self.mono_offset_input)
+
         self.layout.addLayout(input_layout)
 
         self.start_button = QPushButton("Start Analysis")
@@ -46,9 +52,15 @@ class ASAXSconfig(QWidget):
         self.result_text.setReadOnly(True)
         self.layout.addWidget(self.result_text)
 
+        save_layout = QHBoxLayout()
+        self.order_button = QPushButton("Order: Increasing ↑")
+        self.order_button.setCheckable(True)
+        self.order_button.toggled.connect(self._toggle_order)
+        save_layout.addWidget(self.order_button)
         self.save_button = QPushButton("Save Results to TXT")
         self.save_button.clicked.connect(self.save_results)
-        self.layout.addWidget(self.save_button)
+        save_layout.addWidget(self.save_button)
+        self.layout.addLayout(save_layout)
 
         # pyqtgraph plot widget
         self.plot_widget = pg.PlotWidget()
@@ -114,8 +126,9 @@ class ASAXSconfig(QWidget):
         try:
             num_points = int(self.num_points_input.text())
             energy_range = float(self.energy_range_input.text())
+            mono_offset = float(self.mono_offset_input.text())
         except ValueError:
-            self.result_text.setText("Please enter valid numbers for Number of Points and Energy Range.")
+            self.result_text.setText("Please enter valid numbers for Number of Points, Energy Range, and Mono Offset.")
             return
 
         if num_points < 2:
@@ -132,6 +145,7 @@ class ASAXSconfig(QWidget):
 
         energies, f1_values = self.get_f1_curve(self.element, edge_energy, energy_range)
         self.selected_energies, self.selected_f1 = self.select_uniform_f1_points(energies, f1_values, num_points)
+        self.selected_energies = self.selected_energies + mono_offset * 1000
 
         # Update text output
         output = f"{self.edge_info}\n\nSelected {num_points} energy points:\n"
@@ -152,10 +166,17 @@ class ASAXSconfig(QWidget):
                               pen=None, symbol='o', symbolBrush='r', symbolSize=8,
                               name="Selected Points")
 
+    def _toggle_order(self, checked):
+        self.order_button.setText("Order: Decreasing ↓" if checked else "Order: Increasing ↑")
+
     def save_results(self):
-        if len(self.selected_energies)==0:
+        if len(self.selected_energies) == 0:
             self.result_text.setText("No results to save. Please run the analysis first.")
             return
+
+        decreasing = self.order_button.isChecked()
+        energies_out = self.selected_energies[::-1] if decreasing else self.selected_energies
+        f1_out = self.selected_f1[::-1] if decreasing else self.selected_f1
 
         options = QFileDialog.Options()
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Results", "", "Text Files (*.txt)", options=options)
@@ -164,10 +185,10 @@ class ASAXSconfig(QWidget):
             with open(filepath, 'w') as f:
                 f.write(f"{self.edge_info}\n")
                 f.write("Energy (eV)\tf1\n")
-                for en, f1v in zip(self.selected_energies, self.selected_f1):
+                for en, f1v in zip(energies_out, f1_out):
                     f.write(f"{en:.1f}\t{f1v:.3f}\n")
             self.result_text.append(f"\nResults saved to {filepath}")
-        np.savetxt(f"{self.element}_selected_energies.txt", self.selected_energies, fmt="%.3f")
+        np.savetxt(f"{self.element}_selected_energies.txt", energies_out, fmt="%.3f")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
